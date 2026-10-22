@@ -53,6 +53,7 @@ header .cents input{width:64px;padding:6px}
 .hit:not(:disabled):active{transform:scale(.95)}
 .card .n{font-size:2rem;font-weight:700;line-height:1}
 .card .eur{font-size:.85rem;font-weight:700}
+.card .pp{font-size:.8rem;font-weight:600}
 .card.pick{outline:4px solid #FFD400}
 .minus{position:absolute;top:-10px;right:-6px;width:36px;height:36px;border-radius:50%;padding:0;background:var(--ink);border:2px solid var(--c);font-size:1.2rem}
 .minus:disabled{display:none}
@@ -66,6 +67,7 @@ summary{cursor:pointer}
 .chart{margin:8px 0 16px}
 .chart svg{width:100%;height:auto;background:var(--field);border-radius:8px}
 .chart polyline{fill:none;stroke-width:2.5;stroke-linejoin:round}
+.chart .tick{fill:#fff8;font-size:10px;text-anchor:middle}
 .chart .zero{stroke:#fff6}.chart .sep{stroke:#fff3;stroke-dasharray:3 3}
 .chart text{fill:#fffa;font-size:10px}
 figcaption{display:flex;gap:14px;flex-wrap:wrap;justify-content:center;font-size:.85rem;margin-top:6px}
@@ -73,8 +75,7 @@ figcaption{display:flex;gap:14px;flex-wrap:wrap;justify-content:center;font-size
 nav{position:fixed;left:0;right:0;bottom:0;display:flex;background:#0e0f11;border-top:1px solid var(--line)}
 nav button{flex:1;background:none;border-radius:0;padding:16px;font-weight:600;opacity:.55}
 nav button.on{opacity:1;box-shadow:inset 0 3px var(--roxo)}
-.toast{position:fixed;left:12px;right:12px;bottom:72px;max-width:616px;margin:auto;background:var(--paper);color:var(--ink);border-radius:10px;padding:8px 8px 8px 14px;display:flex;align-items:center;justify-content:space-between;box-shadow:0 4px 16px #000a}
-.toast button{color:var(--paper)}
+.btn{flex:1;flex-direction:row;align-items:center;justify-content:center;background:var(--roxo);padding:10px;border-radius:8px;cursor:pointer;font-size:1rem}
 </style>
 </head>
 <body>
@@ -102,6 +103,7 @@ const cell = x => td(x, x);
 const money = x => x.toLocaleString('pt-PT', {style: 'currency', currency: 'EUR'});
 // Jogadores pela ordem do sentido horário; quem dá na mão i roda a partir de g.first.
 const dealer = (g, i) => ((g.first || 0) + i) % 4;
+const nextFirstOf = g => dealer(g, 1); // partida seguinte: dá quem está à esquerda
 // A festa é de quem dá nessa mão.
 const label = (g, h, i) => h.c === 'festa'
   ? `Festa ${h.pos ? '+' : '−'} ${esc(g.players[dealer(g, i)])}` : NEG[h.c].n;
@@ -125,7 +127,7 @@ const val = (J, x) => J.cents ? money(x * J.cents / 100) : `${x} pts`;
 const eurRow = (J, txt) => J.cents ? `<tr><td>${txt}</td>${jTotals(J).map(x => td(x, val(J, x))).join('')}</tr>` : '';
 
 // Estado da mão a ser contada.
-let tab = 'jogo', edit = null, con = null, pos = null, cnt = [0, 0, 0, 0], nextFirst = null, toast = null, toastTimer;
+let tab = 'jogo', edit = null, con = null, pos = null, cnt = [0, 0, 0, 0], nextFirst = null;
 
 function avail() {
   const used = G().hands.filter((_, i) => i !== edit);
@@ -138,8 +140,7 @@ const rem = () => total(con) - cnt.reduce((a, b) => a + b, 0);
 function render() {
   document.getElementById('app').innerHTML = (tab === 'hist' ? histTab() : S.cur ? jogo() : setup())
     + `<nav><button class="${tab === 'jogo' ? 'on' : ''}" onclick="tab='jogo';render()">♠ Jogo</button>
-       <button class="${tab === 'hist' ? 'on' : ''}" onclick="tab='hist';render()">📈 Histórico</button></nav>`
-    + (toast ? `<div class="toast">${toast.msg}<button onclick="undo()">Desfazer</button></div>` : '');
+       <button class="${tab === 'hist' ? 'on' : ''}" onclick="tab='hist';render()">📈 Histórico</button></nav>`;
 }
 
 const mesa = (seat, center = '') => `<div class="mesa">${[0, 1, 2, 3].map(j =>
@@ -166,21 +167,26 @@ function start(e) {
 function jogo() {
   const J = S.cur, g = G(), k = J.games.length, n = g.hands.length;
   const done = n === 10 && edit === null, i = edit ?? n, d = dealer(g, i);
-  const acc = jTotals(J), nf = nextFirst ?? (g.first + 1) % 4, r = con ? rem() : 0;
-  const festa = con === 'festa', counting = !done && con && (festa ? pos !== null : r > 0);
+  const acc = jTotals(J), nf = nextFirst ?? nextFirstOf(g), r = con ? rem() : 0;
+  const festa = con === 'festa', counting = !done && con && (festa ? pos !== null : r > 0), tp = totals(g);
+  // Mão já gravada que está na mesa; 'dirty' = alterada desde que foi gravada.
+  const sv = edit !== null && g.hands[edit];
+  const dirty = sv && (sv.c !== con || sv.counts.join() !== cnt.join() || (festa && sv.pos !== pos));
+  const pp = j => `<span class="pp ${tone(tp[j])}">${tp[j]} pts</span>`;
   const seat = j => done
     ? `<button class="card ${k < 4 && j === nf ? 'pick' : ''}" style="--c:${COL[j]}" ${k < 4 ? `onclick="nextFirst=${j};render()"` : 'disabled'}>
         <b>${esc(J.players[j])}</b>${k < 4 && j === nf ? '<span class="tag d">dá</span>' : ''}
-        <span class="eur ${tone(acc[j])}">${val(J, acc[j])}</span></button>`
+        ${pp(j)}<span class="eur ${tone(acc[j])}">${val(J, acc[j])}</span></button>`
     : `<button class="card hit" style="--c:${COL[j]}" onclick="tap(${j},1)" ${counting ? '' : 'disabled'}>
         <b>${esc(J.players[j])}</b>${j === d ? '<span class="tag d">dá</span>' : j === (d + 1) % 4 ? '<span class="tag">joga 1º</span>' : ''}
-        <span class="n">${cnt[j]}</span><span class="eur ${tone(acc[j])}">${val(J, acc[j])}</span></button>
+        <span class="n">${cnt[j]}</span>${pp(j)}<span class="eur ${tone(acc[j])}">${val(J, acc[j])}</span></button>
        <button class="minus" style="--c:${COL[j]}" onclick="tap(${j},-1)" ${cnt[j] || (festa && counting) ? '' : 'disabled'}>−</button>`;
   const center = done ? (k < 4 ? `Toca em quem dá a partida ${k + 1}` : 'Jornada terminada')
+    : sv && !dirty ? `${festa ? 'Festa' : NEG[con].n}<big>✓</big>gravada`
     : con === 'festa' && pos === null ? 'Positiva ou negativa?'
     : festa ? `Festa<big>${13 - r}</big>vazas contadas`
     : `${NEG[con].n}<big>${r}</big>${r === 1 ? 'falta' : 'faltam'}`;
-  return `<header><b>Partida ${k}/4</b><span>${done ? '· terminada' : edit !== null ? `· a corrigir mão ${i + 1}` : `· mão ${n + 1}/10`}</span>
+  return `<header><b>Partida ${k}/4</b><span>${done ? '· terminada' : `· mão ${i + 1}/10${edit !== null && edit < n - 1 ? ' (a corrigir)' : ''}`}</span>
     <label class="cents">cênt./ponto<input type="number" inputmode="decimal" step="any" min="0" value="${J.cents ?? ''}"
       onchange="S.cur.cents = +this.value; save(); render()"></label></header>
   ${done ? '' : `<div class="chips">${avail().map(c => `<button class="chip ${c === con ? 'on' : ''}" onclick="pick('${c}')">${
@@ -189,11 +195,13 @@ function jogo() {
     <button class="p ${pos === true ? 'on' : ''}" onclick="pickPos(true)">+ Positiva</button>
     <button class="m ${pos === false ? 'on' : ''}" onclick="pickPos(false)">− Negativa</button></div>` : ''}
   ${mesa(seat, center)}
-  ${festa && counting ? '<div class="row"><button class="big" onclick="commit()">Gravar festa</button></div>' : ''}
+  ${festa && counting && (!sv || dirty) ? '<div class="row"><button class="big" onclick="commit()">Gravar festa</button></div>' : ''}
+  ${sv && !dirty ? `<div class="row"><button class="big" onclick="resetHand(); render(); scrollTo(0, 0)">${
+    edit < n - 1 ? 'Voltar ao jogo' : n === 10 ? 'Terminar partida ›' : 'Próxima jogada ›'}</button></div>` : ''}
   ${done ? `<div class="row"><button class="big" onclick="${k < 4 ? 'startNext()' : 'finish()'}">${
     k < 4 ? `Começar partida ${k + 1}` : 'Terminar jornada e guardar'}</button></div>` : ''}
-  ${edit !== null ? `<div class="row"><button class="sec" onclick="del()">Apagar mão</button>
-    <button class="sec" onclick="resetHand(); render()">Cancelar</button></div>` : ''}
+  ${sv ? `<div class="row"><button class="sec" onclick="del()">Apagar mão</button>${
+    dirty ? `<button class="sec" onclick="startEdit(${edit})">Cancelar alteração</button>` : ''}</div>` : ''}
   ${table(g, true)}
   <p><small>Toca numa mão da tabela para a corrigir.</small></p>
   <div class="row"><button class="sec" onclick="abandon()">Abandonar jornada</button></div>`;
@@ -215,23 +223,12 @@ function tap(j, dl) {
   if (dl > 0 && rem() === 0) commit(); else render();
 }
 
-// Grava sozinha quando a contagem fecha; o aviso permite desfazer.
+// Grava sozinha quando a contagem fecha; a mão fica na mesa (e pode ser corrigida) até "Próxima jogada".
 function commit() {
   if (con === 'festa' && pos === null) return render();
   const g = G(), i = edit ?? g.hands.length, h = {c: con, counts: [...cnt]};
   if (con === 'festa') h.pos = pos;
-  const snap = {before: JSON.stringify(g.hands), edit, con, pos, cnt: [...cnt]};
-  g.hands[i] = h;
-  save(); resetHand();
-  toast = {msg: `Mão ${i + 1} gravada`, snap};
-  clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => { toast = null; render(); }, 5000);
-  render();
-}
-function undo() {
-  const s = toast.snap;
-  G().hands = JSON.parse(s.before);
-  ({edit, con, pos} = s); cnt = s.cnt; toast = null;
+  g.hands[i] = h; edit = i;
   save(); render();
 }
 
@@ -243,7 +240,7 @@ function startEdit(i) {
 function del() { if (confirm('Apagar esta mão?')) { G().hands.splice(edit, 1); save(); resetHand(); render(); } }
 function startNext() {
   const g = G();
-  S.cur.games.push({players: S.cur.players, first: nextFirst ?? (g.first + 1) % 4, hands: []});
+  S.cur.games.push({players: S.cur.players, first: nextFirst ?? nextFirstOf(g), hands: []});
   nextFirst = null; save(); resetHand(); render(); scrollTo(0, 0);
 }
 function finish() { S.hist.unshift(S.cur); S.cur = null; save(); resetHand(); tab = 'hist'; render(); }
@@ -264,22 +261,23 @@ function jTable(j) {
   <tfoot><tr><td>Jornada</td>${jTotals(j).map(cell).join('')}</tr>${eurRow(j, 'Valor')}</tfoot></table>`;
 }
 
-// Evolução dos pontos acumulados, mão a mão, ao longo da jornada.
+// Evolução dos pontos acumulados da jornada, partida a partida.
 function chart(J) {
+  if (J.games.every(g => !g.hands.length)) return '';
   const acc = [0, 0, 0, 0], series = [[0], [0], [0], [0]];
-  J.games.forEach(g => g.hands.forEach(h => pts(h).forEach((v, j) => series[j].push(acc[j] += v))));
-  const n = series[0].length - 1;
-  if (!n) return '';
-  const all = series.flat(), lo = Math.min(0, ...all), hi = Math.max(0, ...all);
-  const W = 360, H = 200, P = 10, L = 42;
-  const X = i => L + i * (W - L - P) / n, Y = v => P + (hi - v) * (H - 2 * P) / ((hi - lo) || 1);
+  J.games.forEach(g => totals(g).forEach((v, j) => series[j].push(acc[j] += v)));
+  const n = Math.max(4, J.games.length), all = series.flat(), lo = Math.min(0, ...all), hi = Math.max(0, ...all);
+  const W = 360, H = 210, P = 12, L = 46, B = 24, RP = 30;
+  const X = i => L + i * (W - L - RP) / n, Y = v => P + (hi - v) * (H - P - B) / ((hi - lo) || 1);
   return `<figure class="chart"><svg viewBox="0 0 ${W} ${H}">
-    ${[10, 20, 30].filter(i => i < n).map(i => `<line class="sep" x1="${X(i)}" x2="${X(i)}" y1="${P}" y2="${H - P}"/>`).join('')}
-    <line class="zero" x1="${L}" x2="${W - P}" y1="${Y(0)}" y2="${Y(0)}"/>
+    ${Array.from({length: n + 1}, (_, i) => `<line class="sep" x1="${X(i)}" x2="${X(i)}" y1="${P}" y2="${H - B}"/>
+      <text class="tick" x="${X(i)}" y="${H - 7}" ${i ? '' : 'style="text-anchor:start"'}>${i ? `Partida ${i}` : 'Início'}</text>`).join('')}
+    <line class="zero" x1="${L}" x2="${W - RP}" y1="${Y(0)}" y2="${Y(0)}"/>
     <text x="${L - 6}" y="${Y(hi) + 4}" text-anchor="end">${hi}</text>
     <text x="${L - 6}" y="${Y(0) + 4}" text-anchor="end">0</text>
     <text x="${L - 6}" y="${Y(lo) + 4}" text-anchor="end">${lo}</text>
-    ${series.map((s, j) => `<polyline stroke="${COL[j]}" points="${s.map((v, i) => `${X(i)},${Y(v)}`).join(' ')}"/>`).join('')}
+    ${series.map((s, j) => `<polyline stroke="${COL[j]}" points="${s.map((v, i) => `${X(i)},${Y(v)}`).join(' ')}"/>
+      ${s.map((v, i) => `<circle cx="${X(i)}" cy="${Y(v)}" r="3.5" fill="${COL[j]}"/>`).join('')}`).join('')}
   </svg><figcaption>${J.players.map((p, j) => `<span style="color:${COL[j]}">● ${esc(p)}</span>`).join('')}</figcaption></figure>`;
 }
 
@@ -294,7 +292,47 @@ function histTab() {
     return `<details><summary>${new Date(J.date).toLocaleDateString('pt-PT')} — ${J.players.map((p, j) =>
       `${t[j] === m ? '👑 ' : ''}${esc(p)} ${val(J, t[j])}`).join(' · ')}</summary>${body(J)}</details>`;
   }).join('')}
-  ${!S.cur && !S.hist.length ? '<p>Ainda não há jornadas.</p>' : ''}`;
+  ${!S.cur && !S.hist.length ? '<p>Ainda não há jornadas.</p>' : ''}
+  <h2>Ficheiro de dados</h2>
+  <p><small>Guarda todas as jornadas num ficheiro, para teres uma cópia ou o enviares a outra pessoa que tenha a app.</small></p>
+  <div class="row"><button onclick="exportar()">Exportar ficheiro</button>
+    <label class="btn">Importar ficheiro<input type="file" accept=".json,application/json,text/plain" hidden
+      onchange="importar(this.files[0]); this.value = ''"></label></div>`;
+}
+
+async function exportar() {
+  const name = `king-${new Date().toISOString().slice(0, 10)}.json`;
+  const file = new File([JSON.stringify({app: 'king', v: 1, cur: S.cur, hist: S.hist})], name, {type: 'application/json'});
+  if (navigator.canShare?.({files: [file]})) {
+    try { return await navigator.share({files: [file], title: 'King — pontuações'}); }
+    catch (e) { if (e.name === 'AbortError') return; }
+  }
+  const a = Object.assign(document.createElement('a'), {href: URL.createObjectURL(file), download: name});
+  a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
+
+// O ficheiro pode vir de outra pessoa: validar tudo antes de o usar.
+const okJ = j => j && Number.isFinite(j.date) && Array.isArray(j.players) && j.players.length === 4
+  && j.players.every(p => typeof p === 'string') && (j.cents == null || Number.isFinite(j.cents))
+  && Array.isArray(j.games) && j.games.length >= 1 && j.games.length <= 4 && j.games.every(g =>
+    [0, 1, 2, 3].includes(g?.first) && Array.isArray(g.hands) && g.hands.length <= 10 && g.hands.every(h =>
+      ORDER.includes(h?.c) && Array.isArray(h.counts) && h.counts.length === 4 && h.counts.every(Number.isInteger)
+      && (h.c !== 'festa' || typeof h.pos === 'boolean')));
+
+async function importar(f) {
+  if (!f) return;
+  let d;
+  try { d = JSON.parse(await f.text()); } catch { return alert('O ficheiro não é válido.'); }
+  const hist = Array.isArray(d?.hist) ? d.hist : [], cur = d?.cur ?? null, all = [...hist, ...(cur ? [cur] : [])];
+  if (d?.app !== 'king' || !all.every(okJ)) return alert('O ficheiro não é válido ou não é desta app.');
+  all.forEach(j => j.games.forEach(g => g.players = j.players));
+  if (!confirm(`Importar ${hist.length} jornada(s) terminada(s)${cur ? ' e uma jornada em curso' : ''}?`)) return;
+  // Jornadas com a mesma data ficam com a versão do ficheiro.
+  S.hist = [...S.hist.filter(x => !hist.some(j => j.date === x.date)), ...hist].sort((a, b) => b.date - a.date);
+  if (cur && (!S.cur || S.cur.date === cur.date || confirm('Substituir a tua jornada em curso pela do ficheiro?'))) {
+    S.cur = cur; nextFirst = null;
+  }
+  save(); resetHand(); render();
 }
 
 // O ecrã não se apaga durante o jogo.
